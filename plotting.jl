@@ -17,16 +17,30 @@ end
 function Plots.plot!(nodes::Vector{ParetoRRTStar.Node{T,N,F}}, r::F; kwargs...) where {T,N,F}
     px = [n.state[1] for n in nodes]
     py = [n.state[2] for n in nodes]
-    scatter!(px, py, label=false)
 
     for node in nodes
-        for parent in node.pareto_parents 
-
-            q0 = nodes[parent.index].state
+        for path in node.pareto_paths 
+            parent = path.path[end]
+            q0 = nodes[parent].state
             q1 = node.state
         
             err, path = dubins_shortest_path(q0, q1, r, 1e-3)
           
+            plot!(path; kwargs...)
+        end
+    end
+    # scatter!(px, py, label=false)
+
+end
+
+function plot_pareto_front(nodes::Vector{ParetoRRTStar.Node{T,N,F}}, index::Int64, r::F; kwargs...) where {T,N,F}
+    pareto_paths = nodes[index].pareto_paths
+    for pareto_path in pareto_paths
+        q0 = nodes[index].state
+        for i in reverse(pareto_path.path)
+            q1 = nodes[i].state
+            err, path = dubins_shortest_path(q1, q0, r, 1e-3)
+            q0 = q1
             plot!(path; kwargs...)
         end
     end

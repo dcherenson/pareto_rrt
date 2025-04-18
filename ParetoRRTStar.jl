@@ -2,26 +2,26 @@ module ParetoRRTStar
 using StaticArrays
 abstract type AbstractProblem{T} end
 
-const ParetoParent{N,F} = NamedTuple{(:index, :incremental_cost), Tuple{Int64, SVector{N, F}}}
+const ParetoPath{N,F} = NamedTuple{(:path, :cost), Tuple{Vector{Int64}, SVector{N,F}}}
 
 struct Node{T, N, F}
     state::T
-    pareto_parents::Vector{ParetoParent{N,F}}
+    pareto_paths::Vector{ParetoPath{N,F}}
 end   
 
 # recursive definition of cost to get to a node
-function pareto_front_costs(i::Int64, nodes::Vector{Node{T,N,F}}) where {T,N,F}
-    if isempty(nodes[i].pareto_parents)
-        return [zeros(SVector{N})]
-    end
+# function pareto_front_costs(i::Int64, nodes::Vector{Node{T,N,F}}) where {T,N,F}
+#     if isempty(nodes[i].pareto_paths)
+#         return [zeros(SVector{N})]
+#     end
 
-    pareto_front = SVector{N,F}[]
-    for parent in nodes[i].pareto_parents
-        append!(pareto_front, pareto_front_costs(parent.index, nodes) .+ Ref(parent.incremental_cost))
-    end
-    return pareto_front
+#     pareto_front = SVector{N,F}[]
+#     for parent in nodes[i].pareto_paths
+#         append!(pareto_front, pareto_front_costs(parent.index, nodes) .+ Ref(parent.incremental_cost))
+#     end
+#     return pareto_front
     
-end
+# end
 
 function dominates(cost1, cost2, ϵ)
     return all(cost1 .<= cost2 .+ ϵ) && any(cost1 .< cost2 .+ ϵ)
@@ -29,22 +29,21 @@ function dominates(cost1, cost2, ϵ)
 end
 
 
-function compute_pareto_front(cand_parents::Vector{Int64}, costs::Vector{SVector{N,F}},ϵ::SVector{N,F}) where {N,F}
+function compute_pareto_front(cand_paths::Vector{ParetoPath{N,F}}, ϵ::SVector{N,F}) where {N,F}
     # get the maximum point set of a pareto front
     # this is a set of points that are not dominated by any other point in the set
     # this is a brute force method, but it works for small sets
-    max_set = SVector{N,F}[]
-    parents = Int64[]
-    skip_list = falses(length(costs))
-    for i in 1:length(costs)
+    paths = ParetoPath{N,F}[]
+    skip_list = falses(length(cand_paths))
+    for i in 1:length(cand_paths)
         if skip_list[i]
             continue
         end
         # check if this point is dominated by any other point in the set
         dominated = false
-        for j in 1:length(costs)
-            if i != j && dominates(costs[j], costs[i], ϵ)
-                if !dominates(costs[i], costs[j], ϵ)
+        for j in 1:length(cand_paths)
+            if i != j && dominates(cand_paths[j].cost, cand_paths[i].cost, ϵ)
+                if !dominates(cand_paths[i].cost, cand_paths[j].cost, ϵ)
                     dominated = true
                     break
                 else # mutually dominated
@@ -54,15 +53,14 @@ function compute_pareto_front(cand_parents::Vector{Int64}, costs::Vector{SVector
             end
         end
         if !dominated
-            push!(max_set, costs[i])
-            push!(parents, cand_parents[i])
+            push!(paths, cand_paths[i])
         end
-        if length(parents) >= 5
-            break
-        end
+        # if length(parents) >= 10
+        #     break
+        # end
     end
-    @assert !isempty(parents)
-    return parents, max_set
+    @assert !isempty(paths)
+    return paths
 end
 
 # function compute_pareto_front(cand_parents::Vector{Int64}, costs::Vector{SVector{2,F}}, ϵ::SVector{2,F}) where {F}
@@ -102,8 +100,7 @@ function rrt_star!(problem, nodes, max_iters; do_rewire=true)
 
         # find the nearest node
         i_nearest = nearest(problem, nodes, x_rand)
-        n_nearest = nodes[i_nearest]
-        x_nearest = n_nearest.state
+        x_nearest = nodes[i_nearest].state
 
         # get the new point
         x_new = steer(problem, x_nearest, x_rand)
@@ -115,35 +112,41 @@ function rrt_star!(problem, nodes, max_iters; do_rewire=true)
             # get the set of nearby nodes (this should return an index set)
             I_near = near(problem, nodes, x_new)
 
-            # determine the best one to connect to 
-            # i_cand = i_nearest*ones(Int64, max(length(n_nearest.pareto_parents),1))
-            # x_cand = [nodes[i_min].state]
-            c_cand = pareto_front_costs(i_nearest, nodes) .+ Ref(path_cost(problem, x_nearest, x_new))
-            i_cand = i_nearest*ones(Int64, length(c_cand))
+            # determine the best one to connect to
+            inc_cost = path_cost(problem, x_nearest, x_new)
+            if length(nodes[i_nearest].pareto_paths) == 0
+                # if the nearest node has no pareto paths, then we need to add it
+                p_cand = [(path=[i_nearest], cost=inc_cost)]
+            else
+                p_cand = [(path=[p.path; i_nearest], cost=p.cost .+ inc_cost) for p in nodes[i_nearest].pareto_paths]
+            end
 
             for i_near in I_near
                 if i_near == i_nearest
                     continue
                 end
                 x_near = nodes[i_near].state
-                c_near = pareto_front_costs(i_near, nodes) .+ Ref(path_cost(problem, x_near, x_new))
+                inc_cost = path_cost(problem, x_near, x_new)
+                if length(nodes[i_near].pareto_paths) == 0
+                    # if the nearest node has no pareto paths, then we need to add it
+                    p_near = [(path=[i_near], cost=inc_cost)]
+                else
+                    p_near = [(path=[p.path; i_near], cost=p.cost .+ inc_cost) for p in nodes[i_near].pareto_paths]
+                end
                 
                 if collision_free(problem, x_near, x_new)
-                    i_cand, c_cand = compute_pareto_front([i_cand; i_near*ones(Int64, length(c_near))], [c_cand; c_near], problem.ϵ)
+                    p_cand = compute_pareto_front([p_cand; p_near], problem.ϵ)
                 end
             end
-
-            pareto_parents = [(index=i, incremental_cost=path_cost(problem, nodes[i].state, x_new)) for i in unique(i_cand)]
-
             # if !isfinite(c_min)
             #     continue
             # end
             
             # add in the new edge
-            n_new = Node(x_new, pareto_parents)
+            n_new = Node(x_new, p_cand)
             push!(nodes, n_new)
 
-            println("iter: $iter, new node: $(length(nodes)), pareto parents: $(length(pareto_parents))")
+            iter % 10 == 0 && println("iter: $iter, new node: $(length(nodes)), pareto parents: $(length(p_cand))")
 
             # rewire
             # if do_rewire

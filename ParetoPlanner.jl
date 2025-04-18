@@ -13,7 +13,7 @@ function dubins_distance(q1, q2, turning_radius=0.1)
 end
 
 @kwdef struct ParetoPlannerProblem{F, VW} <: ParetoRRTStar.AbstractProblem{SVector{3,F}}
-    ϵ::SVector{2,F} = SVector(0.1, 0.1) # cost epsilon
+    ϵ::SVector{2,F} = SVector(0.5, 0.5) # cost epsilon
     domain::Tuple{SVector{3,F}, SVector{3,F}} # rectangle defined by opposite corners
     near_radius::F = 30.0
     unsafe_zones::VW
