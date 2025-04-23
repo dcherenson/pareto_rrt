@@ -19,6 +19,7 @@ end
     unsafe_zones::VW
     turning_radius::F = 10.0
     max_velocity::F = 10.0
+    risk_zone::SVector{3,F} # x,y,radius
 end
 
 struct ParetoPlanner{TP, TN}
@@ -92,14 +93,14 @@ function ParetoRRTStar.steer(problem::ParetoPlannerProblem, x_nearest, x_rand; m
     
 end
 
-function ParetoRRTStar.collision_free(problem::ParetoPlannerProblem, x_nearest, x_new; step_size=0.1)
+function ParetoRRTStar.path_cost_collision_free(problem::ParetoPlannerProblem, x_nearest, x_new; step_size=0.1)
 
     # create the path
     errcode, path = Dubins.dubins_shortest_path(x_nearest, x_new, problem.turning_radius, 1e-3)
     @assert errcode == Dubins.EDUBOK
 
     L = Dubins.dubins_path_length(path)
-
+    R = 0.0
     x = 0.0
     while x < L
         errcode, q = Dubins.dubins_path_sample(path, x)
@@ -108,24 +109,28 @@ function ParetoRRTStar.collision_free(problem::ParetoPlannerProblem, x_nearest, 
     
         # check each point for collision 
         if q[1] < problem.domain[1][1] || q[1] > problem.domain[2][1] || q[2] < problem.domain[1][2] || q[2] > problem.domain[2][2] || World.is_unsafe(problem.unsafe_zones, q)
-            return false
+            return SVector(0.0,0.0), false
         end
+        r_sq = ((q[1] - problem.risk_zone[1])^2 + (q[2] - problem.risk_zone[2])^2)
+        R += 10*exp(-r_sq / (4 * problem.risk_zone[3])) * step_size
         x += step_size
     end
 
-    return true
+    return SVector(L,R), true
 end
 
-function ParetoRRTStar.path_cost(problem::ParetoPlannerProblem, x_near, x_new)
+# function ParetoRRTStar.path_cost(problem::ParetoPlannerProblem, x_near, x_new)
 
-    # create the path
-    errcode, path = Dubins.dubins_shortest_path(x_near, x_new, problem.turning_radius, 1e-3)
-    @assert errcode == Dubins.EDUBOK    
+#     # create the path
+#     errcode, path = Dubins.dubins_shortest_path(x_near, x_new, problem.turning_radius, 1e-3)
+#     @assert errcode == Dubins.EDUBOK    
 
-    L = Dubins.dubins_path_length(path)
+#     L = Dubins.dubins_path_length(path)
 
-    C = path.path_type < Dubins.RLR ? Dubins.dubins_segment_length(path, 2) : 0.0
+#     R = 0.0
 
-    return SVector(L, C)
-    # return SVector(L)
-end
+#     while 
+
+#     return SVector(L, C)
+#     # return SVector(L)
+# end

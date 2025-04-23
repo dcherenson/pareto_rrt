@@ -106,14 +106,13 @@ function rrt_star!(problem, nodes, max_iters; do_rewire=true)
         x_new = steer(problem, x_nearest, x_rand)
 
         # check that it is obstacle free
-        collfree =  collision_free(problem, x_nearest, x_new)
+        inc_cost, collfree =  path_cost_collision_free(problem, x_nearest, x_new)
 
         if collfree 
             # get the set of nearby nodes (this should return an index set)
             I_near = near(problem, nodes, x_new)
 
             # determine the best one to connect to
-            inc_cost = path_cost(problem, x_nearest, x_new)
             if length(nodes[i_nearest].pareto_paths) == 0
                 # if the nearest node has no pareto paths, then we need to add it
                 p_cand = [(path=[i_nearest], cost=inc_cost)]
@@ -126,15 +125,15 @@ function rrt_star!(problem, nodes, max_iters; do_rewire=true)
                     continue
                 end
                 x_near = nodes[i_near].state
-                inc_cost = path_cost(problem, x_near, x_new)
-                if length(nodes[i_near].pareto_paths) == 0
-                    # if the nearest node has no pareto paths, then we need to add it
-                    p_near = [(path=[i_near], cost=inc_cost)]
-                else
-                    p_near = [(path=[p.path; i_near], cost=p.cost .+ inc_cost) for p in nodes[i_near].pareto_paths]
-                end
+                inc_cost, coll_free = path_cost_collision_free(problem, x_near, x_new)
+                if coll_free
+                    if length(nodes[i_near].pareto_paths) == 0
+                        # if the nearest node has no pareto paths, then we need to add it
+                        p_near = [(path=[i_near], cost=inc_cost)]
+                    else
+                        p_near = [(path=[p.path; i_near], cost=p.cost .+ inc_cost) for p in nodes[i_near].pareto_paths]
+                    end
                 
-                if collision_free(problem, x_near, x_new)
                     p_cand = compute_pareto_front([p_cand; p_near], problem.ϵ)
                 end
             end
@@ -143,28 +142,30 @@ function rrt_star!(problem, nodes, max_iters; do_rewire=true)
             # end
             
             # add in the new edge
-            n_new = Node(x_new, p_cand)
+            p_new = p_cand
+            n_new = Node(x_new, p_new)
             push!(nodes, n_new)
 
             iter % 10 == 0 && println("iter: $iter, new node: $(length(nodes)), pareto parents: $(length(p_cand))")
 
             # rewire
-            # if do_rewire
-            #     i_new = length(nodes)
-            #     for i_near in I_near
-            #         if nodes[i_near].parent_index != 0
-            #             x_near = nodes[i_near].state
-            #             pc = path_cost(problem, x_new, x_near) 
-            #             if (cost(i_new, nodes) + pc < cost(i_near, nodes) ) && collision_free(problem, x_new, x_near)
-            #                 # # change the parent of i_near to i_new
-            #                 # nodes[i_near].parent_index = i_new
-            #                 # nodes[i_near].incremental_cost = pc
-            #                 new_node = Node(nodes[i_near].state, i_new, pc)
-            #                 nodes[i_near] = new_node
-            #             end
-            #         end
-            #     end
-            # end
+            if do_rewire
+                i_new = length(nodes)
+                for i_near in I_near
+                    if length(nodes[i_near].pareto_paths) > 0
+                        x_near = nodes[i_near].state
+                        pc, coll_free = path_cost_collision_free(problem, x_new, x_near) 
+                        if coll_free #&& (cost(i_new, nodes) + pc < cost(i_near, nodes) )
+                            
+                            p_cand = [(path=[p.path; i_near], cost=p.cost .+ inc_cost) for p in p_new]
+                            p_cand = compute_pareto_front([p_cand; nodes[i_near].pareto_paths], problem.ϵ)
+                            # change the parent of i_near to i_new
+                            new_node = Node(nodes[i_near].state, p_cand)
+                            nodes[i_near] = new_node
+                        end
+                    end
+                end
+            end
         end
     end
 end
@@ -218,8 +219,8 @@ function steer(problem::P, x_nearest, x_rand) where {T, P<: AbstractProblem{T}}
     throw(MethodError(steer, (problem, x_nearest, x_rand)))
 end
 
-function collision_free(problem::P, x_nearest, x_new) where {T, P<: AbstractProblem{T}}
-    throw(MethodError(collision_free, (problem, x_nearest, x_new)))
+function path_cost_collision_free(problem::P, x_nearest, x_new) where {T, P<: AbstractProblem{T}}
+    throw(MethodError(path_cost_collision_free, (problem, x_nearest, x_new)))
 end
 
 function path_cost(problem::P, x_near, x_new) where {T, P <: AbstractProblem{T}}
