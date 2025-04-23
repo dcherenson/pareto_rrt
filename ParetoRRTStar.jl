@@ -7,6 +7,7 @@ const ParetoPath{N,F} = NamedTuple{(:path, :cost), Tuple{Vector{Int64}, SVector{
 struct Node{T, N, F}
     state::T
     pareto_paths::Vector{ParetoPath{N,F}}
+    children::Set{Int64} # set of children
 end   
 
 # recursive definition of cost to get to a node
@@ -142,25 +143,40 @@ function rrt_star!(problem, nodes, max_iters; do_rewire=true)
             # end
             
             # add in the new edge
+
             p_new = p_cand
-            n_new = Node(x_new, p_new)
+            n_new = Node(x_new, p_new, Set{Int64}())
             push!(nodes, n_new)
+            i_new = length(nodes)
+
+            for p in p_new
+                push!(nodes[p.path[end]].children, i_new)
+            end
 
             iter % 10 == 0 && println("iter: $iter, new node: $(length(nodes)), pareto parents: $(length(p_cand))")
 
             # rewire
             if do_rewire
-                i_new = length(nodes)
                 for i_near in I_near
                     if length(nodes[i_near].pareto_paths) > 0
                         x_near = nodes[i_near].state
-                        pc, coll_free = path_cost_collision_free(problem, x_new, x_near) 
+                        inc_cost, coll_free = path_cost_collision_free(problem, x_new, x_near) 
                         if coll_free #&& (cost(i_new, nodes) + pc < cost(i_near, nodes) )
                             
-                            p_cand = [(path=[p.path; i_near], cost=p.cost .+ inc_cost) for p in p_new]
+                            p_cand = [(path=[p.path; i_new], cost=p.cost .+ inc_cost) for p in p_new]
                             p_cand = compute_pareto_front([p_cand; nodes[i_near].pareto_paths], problem.ϵ)
                             # change the parent of i_near to i_new
-                            new_node = Node(nodes[i_near].state, p_cand)
+                            old_parents = setdiff([p.path[end] for p in nodes[i_near].pareto_paths], [p.path[end] for p in p_cand])
+                            for p in old_parents
+                                delete!(nodes[p].children, i_near)
+                            end
+                            for p in p_cand
+                                push!(nodes[p.path[end]].children, i_near)
+                            end
+
+                            # println("number of removed parents: $(length(old_parents)), number of new parents: $(length(p_cand))")
+
+                            new_node = Node(nodes[i_near].state, p_cand, nodes[i_near].children)
                             nodes[i_near] = new_node
                         end
                     end
